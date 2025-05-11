@@ -10,5 +10,5 @@ It was designed to run in landscape mode on my old iPad Mini 3 that I repurposed
 * Choice of standard and vaporwave-inspired colors for background and life cells.
 
 ### Controls
-* *Single tap*: start new random simulation.
-* *Double tap*: access color choice options menu.
+* **Single tap**: start new random simulation.
+* **Double tap**: access color choice options menu.
