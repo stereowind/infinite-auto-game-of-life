@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minimal Infinite Game of Life</title>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: #000;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+    }
+    canvas {
+      display: block;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="life"></canvas>
+  <div id="optionsMenu" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:10; align-items:center; justify-content:center;">
+    <div style="background:#222; color:#fff; padding:2em; border-radius:1em; min-width:250px; max-width:90vw; box-shadow:0 0 20px #000; display:flex; flex-direction:column; gap:1.5em; align-items:center;">
+      <div style="display:flex; flex-direction:column; gap:0.5em; align-items:center;">
+        <span>Background Color:</span>
+        <div id="bgColorBlocks" style="display:flex; gap:0.5em;"></div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:0.5em; align-items:center;">
+        <span>Life Color:</span>
+        <div id="fgColorBlocks" style="display:flex; gap:0.5em;"></div>
+      </div>
+      <button id="applyOptions" style="padding:0.5em 2em; font-size:1.1em; border:none; border-radius:0.5em; background:#1976d2; color:#fff; cursor:pointer;">Apply & Close</button>
+    </div>
+  </div>
+  <script>
+    // Config
+    const COLS = 80;
+    const ROWS = 53;
+    const ALIVE = 1, DEAD = 0;
+    const FPS = 10;
+
+    const canvas = document.getElementById('life');
+    const ctx = canvas.getContext('2d');
+
+    const COLOR_CHOICES = [
+      { value: '#000', name: 'Black' },
+      { value: '#fff', name: 'White' },
+      { value: '#222', name: 'Dark Gray' },
+      { value: '#1976d2', name: 'Blue' },
+      { value: '#388e3c', name: 'Green' },
+      { value: '#d32f2f', name: 'Red' },
+      { value: '#fbc02d', name: 'Yellow' },
+      // Vaporwave colors
+      { value: '#ff71ce', name: 'Vapor Pink' },
+      { value: '#01cdfe', name: 'Vapor Cyan' },
+      { value: '#05ffa1', name: 'Vapor Green' },
+      { value: '#b967ff', name: 'Vapor Purple' },
+      { value: '#fffb96', name: 'Vapor Yellow' },
+      { value: '#ffb86c', name: 'Vapor Peach' },
+      { value: '#f7a8b8', name: 'Vapor Rose' },
+      { value: '#2d1b4f', name: 'Vapor Indigo' }
+    ];
+
+    let BG = localStorage.getItem('lifeBG') || '#000', FG = localStorage.getItem('lifeFG') || '#fff';
+
+    function resizeCanvas() {
+      // Always fill the window, and adapt grid size to fit
+      const cellW = window.innerWidth / COLS;
+      const cellH = window.innerHeight / ROWS;
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      canvas.style.width = '100vw';
+      canvas.style.height = '100vh';
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // Add manual restart on click/tap
+    canvas.addEventListener('click', restart);
+    canvas.addEventListener('touchstart', function(e) {
+      e.preventDefault(); // Prevent scrolling
+      restart();
+    }, { passive: false });
+
+    // Double click/tap for options menu
+    let lastTap = 0;
+    let selectedBG = BG, selectedFG = FG;
+
+    function createColorBlocks(containerId, selectedValue, onSelect) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = '';
+      COLOR_CHOICES.forEach(color => {
+        const block = document.createElement('div');
+        block.title = color.name;
+        block.style.background = color.value;
+        block.style.width = '2em';
+        block.style.height = '2em';
+        block.style.borderRadius = '0.5em';
+        block.style.border = color.value === selectedValue ? '3px solid #fff' : '2px solid #888';
+        block.style.cursor = 'pointer';
+        block.style.boxSizing = 'border-box';
+        block.onclick = () => onSelect(color.value);
+        container.appendChild(block);
+      });
+    }
+
+    function showOptionsMenu() {
+      document.getElementById('optionsMenu').style.display = 'flex';
+      selectedBG = BG;
+      selectedFG = FG;
+      createColorBlocks('bgColorBlocks', selectedBG, function(val) {
+        selectedBG = val;
+        createColorBlocks('bgColorBlocks', selectedBG, arguments.callee);
+      });
+      createColorBlocks('fgColorBlocks', selectedFG, function(val) {
+        selectedFG = val;
+        createColorBlocks('fgColorBlocks', selectedFG, arguments.callee);
+      });
+      running = false;
+    }
+    function hideOptionsMenu() {
+      document.getElementById('optionsMenu').style.display = 'none';
+      running = true;
+      loop();
+    }
+    canvas.addEventListener('dblclick', function(e) {
+      showOptionsMenu();
+    });
+    canvas.addEventListener('touchend', function(e) {
+      const now = Date.now();
+      if (now - lastTap < 400) {
+        showOptionsMenu();
+        e.preventDefault();
+      }
+      lastTap = now;
+    });
+    document.getElementById('applyOptions').onclick = function() {
+      BG = selectedBG;
+      FG = selectedFG;
+      localStorage.setItem('lifeBG', BG);
+      localStorage.setItem('lifeFG', FG);
+      hideOptionsMenu();
+    };
+
+    // Game state
+    let grid, prevStates, running = true;
+
+    function randomGrid() {
+      const arr = [];
+      for (let y = 0; y < ROWS; y++) {
+        arr[y] = [];
+        for (let x = 0; x < COLS; x++) {
+          arr[y][x] = Math.random() < 0.5 ? ALIVE : DEAD;
+        }
+      }
+      return arr;
+    }
+
+    function drawGrid(grid) {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const cellW = canvas.width / COLS;
+      const cellH = canvas.height / ROWS;
+      ctx.fillStyle = FG;
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (grid[y][x] === ALIVE) {
+            ctx.fillRect(x * cellW, y * cellH, cellW, cellH);
+          }
+        }
+      }
+    }
+
+    function nextGen(grid) {
+      const next = [];
+      for (let y = 0; y < ROWS; y++) {
+        next[y] = [];
+        for (let x = 0; x < COLS; x++) {
+          let count = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const ny = y + dy, nx = x + dx;
+              if (ny >= 0 && ny < ROWS && nx >= 0 && nx < COLS) {
+                count += grid[ny][nx];
+              }
+            }
+          }
+          next[y][x] = (grid[y][x] === ALIVE)
+            ? (count === 2 || count === 3 ? ALIVE : DEAD)
+            : (count === 3 ? ALIVE : DEAD);
+        }
+      }
+      return next;
+    }
+
+    function gridToString(grid) {
+      return grid.map(row => row.join('')).join('');
+    }
+
+    function isStableOrDead(grid, prevStates) {
+      const str = gridToString(grid);
+      if (str.indexOf('1') === -1) return true; // All dead
+      return prevStates.has(str); // Repeats
+    }
+
+    function restart() {
+      grid = randomGrid();
+      prevStates = new Set();
+    }
+
+    function loop() {
+      if (!running) return;
+      drawGrid(grid);
+      const str = gridToString(grid);
+      if (isStableOrDead(grid, prevStates)) {
+        restart();
+      } else {
+        prevStates.add(str);
+        if (prevStates.size > 100) {
+          // Limit memory usage
+          prevStates = new Set(Array.from(prevStates).slice(-100));
+        }
+        grid = nextGen(grid);
+      }
+      setTimeout(loop, 1000 / FPS);
+    }
+
+    // Start
+    resizeCanvas();
+    restart();
+    loop();
+  </script>
+</body>
+</html>
